@@ -1,0 +1,17 @@
+# credentials and local config
+.env
+*.pgpass
+
+# database data directories and dumps
+pgdata/
+mongo-data/
+*.dump
+
+# editor and OS files
+.vscode/
+Thumbs.db
+desktop.ini
+
+# python
+__pycache__/
+.venv/
