@@ -489,7 +489,12 @@ SELECT p.*, random() AS r_method
 -- the revenue recognised when an order is collected, and monthly costs.
 CREATE TEMP TABLE _entry ON COMMIT DROP AS
 SELECT (1000 + row_number() OVER (ORDER BY e.entry_date, e.src, e.order_id))::int AS entry_id, e.*
-  FROM (SELECT src, order_id, entry_date, amount, staff_id, r_method FROM _pay
+  FROM (SELECT src, order_id, entry_date, amount, staff_id,
+               CASE WHEN r_method < 0.30 THEN 'cash'
+                    WHEN r_method < 0.75 THEN 'bank_transfer'
+                    WHEN r_method < 0.95 THEN 'pos'
+                    ELSE 'mobile_money' END AS method
+          FROM _pay
         UNION ALL
         SELECT 'revenue', o.order_id, LEAST(o.due_date, DATE :'asof'), t.total, o.taken_by, NULL
           FROM customer_order o
@@ -502,14 +507,9 @@ SELECT (1000 + row_number() OVER (ORDER BY e.entry_date, e.src, e.order_id))::in
          CROSS JOIN (VALUES ('rent', 250000.00), ('wages', 900000.00), ('utilities', 60000.00))
                     AS c (src, amount)) e;
 
-ALTER TABLE _entry ADD COLUMN method text;
-UPDATE _entry
-   SET method = CASE WHEN r_method < 0.30 THEN 'cash'
-                     WHEN r_method < 0.75 THEN 'bank_transfer'
-                     WHEN r_method < 0.95 THEN 'pos'
-                     ELSE 'mobile_money' END
- WHERE src IN ('deposit', 'balance');
-
+-- Entries and their lines are written in entry order, which is date
+-- order. A real ledger fills up the same way, one day after another, and
+-- the block-range index in this portfolio depends on it.
 INSERT INTO journal_entry (entry_id, entry_date, description, posted_by, created_at)
 OVERRIDING SYSTEM VALUE
 SELECT entry_id, entry_date,
@@ -519,46 +519,35 @@ SELECT entry_id, entry_date,
                 ELSE initcap(src) || ' for ' || to_char(entry_date, 'Mon YYYY') END,
        staff_id,
        entry_date + TIME '17:00'
-  FROM _entry;
+  FROM _entry
+ ORDER BY entry_id;
 
--- money received: debit cash or bank, credit customer deposits
 INSERT INTO journal_line (entry_id, account_id, debit, credit)
-SELECT e.entry_id, a.account_id, e.amount, 0
-  FROM _entry e
-  JOIN account a ON a.code = CASE WHEN e.method = 'cash' THEN '1000' ELSE '1010' END
- WHERE e.src IN ('deposit', 'balance')
-UNION ALL
-SELECT e.entry_id, a.account_id, 0, e.amount
-  FROM _entry e
-  JOIN account a ON a.code = '2000'
- WHERE e.src IN ('deposit', 'balance');
-
--- order collected: the deposit stops being owed and becomes revenue
-INSERT INTO journal_line (entry_id, account_id, debit, credit)
-SELECT e.entry_id, a.account_id, e.amount, 0
-  FROM _entry e
-  JOIN account a ON a.code = '2000'
- WHERE e.src = 'revenue'
-UNION ALL
-SELECT e.entry_id, a.account_id, 0, r.amount
-  FROM _entry e
-  JOIN _rev r USING (order_id)
-  JOIN account a ON a.code = r.code
- WHERE e.src = 'revenue';
-
--- monthly costs: debit the expense, credit the bank
-INSERT INTO journal_line (entry_id, account_id, debit, credit)
-SELECT e.entry_id, a.account_id, e.amount, 0
-  FROM _entry e
-  JOIN account a ON a.code = CASE e.src WHEN 'rent' THEN '6100'
-                                        WHEN 'wages' THEN '6000'
-                                        ELSE '6200' END
- WHERE e.src IN ('rent', 'wages', 'utilities')
-UNION ALL
-SELECT e.entry_id, a.account_id, 0, e.amount
-  FROM _entry e
-  JOIN account a ON a.code = '1010'
- WHERE e.src IN ('rent', 'wages', 'utilities');
+SELECT l.entry_id, a.account_id, l.debit, l.credit
+  FROM (-- money received: debit cash or bank, credit customer deposits
+        SELECT entry_id, CASE WHEN method = 'cash' THEN '1000' ELSE '1010' END AS code,
+               amount AS debit, 0 AS credit
+          FROM _entry WHERE src IN ('deposit', 'balance')
+        UNION ALL
+        SELECT entry_id, '2000', 0, amount
+          FROM _entry WHERE src IN ('deposit', 'balance')
+        -- order collected: the deposit stops being owed and becomes revenue
+        UNION ALL
+        SELECT entry_id, '2000', amount, 0
+          FROM _entry WHERE src = 'revenue'
+        UNION ALL
+        SELECT e.entry_id, r.code, 0, r.amount
+          FROM _entry e JOIN _rev r USING (order_id) WHERE e.src = 'revenue'
+        -- monthly costs: debit the expense, credit the bank
+        UNION ALL
+        SELECT entry_id, CASE src WHEN 'rent' THEN '6100' WHEN 'wages' THEN '6000' ELSE '6200' END,
+               amount, 0
+          FROM _entry WHERE src IN ('rent', 'wages', 'utilities')
+        UNION ALL
+        SELECT entry_id, '1010', 0, amount
+          FROM _entry WHERE src IN ('rent', 'wages', 'utilities')) l
+  JOIN account a ON a.code = l.code
+ ORDER BY l.entry_id, l.debit DESC;
 
 INSERT INTO payment (order_id, paid_at, amount, method, payment_kind, reference,
                      received_by, journal_entry_id)
