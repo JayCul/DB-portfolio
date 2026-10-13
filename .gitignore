@@ -15,3 +15,6 @@ desktop.ini
 # python
 __pycache__/
 .venv/
+
+# benchmark warm-up output, overwritten on every run
+portfolio-2-query-optimisation/results/warmup.txt

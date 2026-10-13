@@ -1,0 +1,152 @@
+-- A1: how closely the order of rows on disk follows entry_date (1 = exactly)
+  attname   | correlation 
+------------+-------------
+ entry_date |           1
+(1 row)
+
+CREATE INDEX
+VACUUM
+
+-- A2: size of each index on the same 273,958 rows
+        index_name        | index_size | pages 
+--------------------------+------------+-------
+ journal_entry_date_brin  | 24 kB      |     3
+ journal_entry_date_btree | 1928 kB    |   241
+(2 rows)
+
+
+-- A3: one month of entries, with both indexes available
+                                                                          QUERY PLAN                                                                          
+--------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate  (cost=234.09..234.10 rows=1 width=8) (actual time=0.683..0.683 rows=1.00 loops=1)
+   Buffers: shared hit=2 read=10
+   ->  Index Only Scan using journal_entry_date_btree on journal_entry  (cost=0.42..211.68 rows=8963 width=0) (actual time=0.022..0.417 rows=8883.00 loops=1)
+         Index Cond: ((entry_date >= '2026-09-01'::date) AND (entry_date < '2026-10-01'::date))
+         Heap Fetches: 0
+         Index Searches: 1
+         Buffers: shared hit=2 read=10
+ Planning:
+   Buffers: shared hit=21 read=3
+ Planning Time: 0.473 ms
+ Execution Time: 0.703 ms
+(11 rows)
+
+DROP INDEX
+
+-- A4: the same query with only the block-range index
+                                                                   QUERY PLAN                                                                   
+------------------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate  (cost=2835.32..2835.33 rows=1 width=8) (actual time=1.111..1.112 rows=1.00 loops=1)
+   Buffers: shared hit=136
+   ->  Bitmap Heap Scan on journal_entry  (cost=14.28..2812.81 rows=9007 width=0) (actual time=0.192..0.858 rows=8883.00 loops=1)
+         Recheck Cond: ((entry_date >= '2026-09-01'::date) AND (entry_date < '2026-10-01'::date))
+         Rows Removed by Index Recheck: 4452
+         Heap Blocks: lossy=128
+         Buffers: shared hit=136
+         ->  Bitmap Index Scan on journal_entry_date_brin  (cost=0.00..12.02 rows=9902 width=0) (actual time=0.036..0.036 rows=1280.00 loops=1)
+               Index Cond: ((entry_date >= '2026-09-01'::date) AND (entry_date < '2026-10-01'::date))
+               Index Searches: 1
+               Buffers: shared hit=8
+ Planning:
+   Buffers: shared hit=6
+ Planning Time: 0.378 ms
+ Execution Time: 1.132 ms
+(15 rows)
+
+DROP MATERIALIZED VIEW
+SELECT 148
+CREATE INDEX
+ANALYZE
+
+-- B1: Q4 answered from the materialized view
+                                                      QUERY PLAN                                                      
+----------------------------------------------------------------------------------------------------------------------
+ Sort  (cost=3.89..3.90 rows=4 width=30) (actual time=0.022..0.022 rows=4.00 loops=1)
+   Sort Key: code
+   Sort Method: quicksort  Memory: 25kB
+   Buffers: shared hit=2
+   ->  Seq Scan on mv_monthly_revenue  (cost=0.00..3.85 rows=4 width=30) (actual time=0.008..0.012 rows=4.00 loops=1)
+         Filter: (month = '2026-09-01'::date)
+         Rows Removed by Filter: 144
+         Buffers: shared hit=2
+ Planning:
+   Buffers: shared hit=14 read=1
+ Planning Time: 0.099 ms
+ Execution Time: 0.031 ms
+(12 rows)
+
+
+-- B2: rows where the view and the live query disagree (expect 0)
+ differences 
+-------------
+           0
+(1 row)
+
+
+-- B3: what a refresh costs
+REFRESH MATERIALIZED VIEW
+ refresh_ms 
+------------
+        118
+(1 row)
+
+
+-- C1: Q4 with parallel query at the server default
+                                                                                        QUERY PLAN                                                                                        
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort  (cost=10739.70..10739.71 rows=4 width=51) (actual time=42.504..47.627 rows=4.00 loops=1)
+   Sort Key: a.code
+   Sort Method: quicksort  Memory: 25kB
+   Buffers: shared hit=3917
+   ->  Finalize GroupAggregate  (cost=10738.37..10739.66 rows=4 width=51) (actual time=42.495..47.623 rows=4.00 loops=1)
+         Group Key: a.name
+         Buffers: shared hit=3917
+         ->  Gather Merge  (cost=10738.37..10739.54 rows=10 width=51) (actual time=42.488..47.614 rows=12.00 loops=1)
+               Workers Planned: 2
+               Workers Launched: 2
+               Buffers: shared hit=3917
+               ->  Sort  (cost=9738.35..9738.36 rows=4 width=51) (actual time=18.159..18.161 rows=4.00 loops=3)
+                     Sort Key: a.name
+                     Sort Method: quicksort  Memory: 25kB
+                     Buffers: shared hit=3917
+                     Worker 0:  Sort Method: quicksort  Memory: 25kB
+                     Worker 1:  Sort Method: quicksort  Memory: 25kB
+                     ->  Partial HashAggregate  (cost=9738.26..9738.31 rows=4 width=51) (actual time=18.140..18.143 rows=4.00 loops=3)
+                           Group Key: a.name
+                           Batches: 1  Memory Usage: 32kB
+                           Buffers: shared hit=3899
+                           Worker 0:  Batches: 1  Memory Usage: 32kB
+                           Worker 1:  Batches: 1  Memory Usage: 32kB
+                           ->  Hash Join  (cost=2819.11..9722.06 rows=2160 width=28) (actual time=16.427..17.922 rows=1132.33 loops=3)
+                                 Hash Cond: (jl.account_id = a.account_id)
+                                 Buffers: shared hit=3899
+                                 ->  Parallel Hash Join  (cost=2817.87..9693.56 rows=8098 width=13) (actual time=16.147..17.374 rows=6275.00 loops=3)
+                                       Hash Cond: (jl.entry_id = je.entry_id)
+                                       Buffers: shared hit=3896
+                                       ->  Parallel Seq Scan on journal_line jl  (cost=0.00..6229.11 rows=246311 width=17) (actual time=0.005..5.580 rows=197048.67 loops=3)
+                                             Buffers: shared hit=3766
+                                       ->  Parallel Hash  (cost=2751.65..2751.65 rows=5298 width=4) (actual time=0.522..0.523 rows=2961.00 loops=3)
+                                             Buckets: 16384  Batches: 1  Memory Usage: 480kB
+                                             Buffers: shared hit=130
+                                             ->  Parallel Bitmap Heap Scan on journal_entry je  (cost=14.28..2751.65 rows=5298 width=4) (actual time=0.185..0.876 rows=8883.00 loops=1)
+                                                   Recheck Cond: ((entry_date >= '2026-09-01'::date) AND (entry_date < '2026-10-01'::date))
+                                                   Rows Removed by Index Recheck: 4452
+                                                   Heap Blocks: lossy=128
+                                                   Buffers: shared hit=130
+                                                   ->  Bitmap Index Scan on journal_entry_date_brin  (cost=0.00..12.02 rows=9902 width=0) (actual time=0.028..0.028 rows=1280.00 loops=1)
+                                                         Index Cond: ((entry_date >= '2026-09-01'::date) AND (entry_date < '2026-10-01'::date))
+                                                         Index Searches: 1
+                                                         Buffers: shared hit=2
+                                 ->  Hash  (cost=1.19..1.19 rows=4 width=23) (actual time=0.232..0.233 rows=4.00 loops=3)
+                                       Buckets: 1024  Batches: 1  Memory Usage: 9kB
+                                       Buffers: shared hit=3
+                                       ->  Seq Scan on account a  (cost=0.00..1.19 rows=4 width=23) (actual time=0.225..0.226 rows=4.00 loops=3)
+                                             Filter: ((account_type)::text = 'revenue'::text)
+                                             Rows Removed by Filter: 11
+                                             Buffers: shared hit=3
+ Planning:
+   Buffers: shared hit=21
+ Planning Time: 0.268 ms
+ Execution Time: 47.678 ms
+(54 rows)
+

@@ -1,0 +1,13 @@
+         index_name          |   table_name    | index_size | table_size 
+-----------------------------+-----------------+------------+------------
+ journal_line_entry_idx      | journal_line    | 11 MB      | 29 MB
+ payment_order_cover_idx     | payment         | 7272 kB    | 16 MB
+ order_item_order_cover_idx  | order_item      | 5976 kB    | 14 MB
+ customer_order_customer_idx | customer_order  | 2200 kB    | 5904 kB
+ measurement_set_wearer_idx  | measurement_set | 800 kB     | 1552 kB
+ customer_name_trgm_idx      | customer        | 512 kB     | 4024 kB
+ customer_order_open_idx     | customer_order  | 56 kB      | 5904 kB
+ job_assignment_open_idx     | job_assignment  | 40 kB      | 13 MB
+ journal_entry_date_brin     | journal_entry   | 24 kB      | 21 MB
+(9 rows)
+

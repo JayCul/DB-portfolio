@@ -1,0 +1,319 @@
+-- Q1: Front desk - one customer's orders and what each is worth
+                                                                                 QUERY PLAN                                                                                 
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort  (cost=315.05..315.15 rows=40 width=50) (actual time=0.356..0.359 rows=45.00 loops=1)
+   Sort Key: o.order_date DESC
+   Sort Method: quicksort  Memory: 27kB
+   Buffers: shared hit=183
+   ->  GroupAggregate  (cost=312.72..313.99 rows=40 width=50) (actual time=0.309..0.347 rows=45.00 loops=1)
+         Group Key: o.order_id
+         Buffers: shared hit=183
+         ->  Sort  (cost=312.72..312.91 rows=77 width=29) (actual time=0.301..0.305 rows=91.00 loops=1)
+               Sort Key: o.order_id
+               Sort Method: quicksort  Memory: 29kB
+               Buffers: shared hit=183
+               ->  Nested Loop  (cost=5.02..310.31 rows=77 width=29) (actual time=0.046..0.277 rows=91.00 loops=1)
+                     Buffers: shared hit=183
+                     ->  Bitmap Heap Scan on customer_order o  (cost=4.60..134.21 rows=40 width=18) (actual time=0.028..0.077 rows=45.00 loops=1)
+                           Recheck Cond: (customer_id = 1100)
+                           Heap Blocks: exact=44
+                           Buffers: shared hit=46
+                           ->  Bitmap Index Scan on customer_order_customer_idx  (cost=0.00..4.59 rows=40 width=0) (actual time=0.011..0.011 rows=45.00 loops=1)
+                                 Index Cond: (customer_id = 1100)
+                                 Index Searches: 1
+                                 Buffers: shared hit=2
+                     ->  Index Only Scan using order_item_order_cover_idx on order_item oi  (cost=0.42..4.37 rows=3 width=15) (actual time=0.003..0.004 rows=2.02 loops=45)
+                           Index Cond: (order_id = o.order_id)
+                           Heap Fetches: 0
+                           Index Searches: 45
+                           Buffers: shared hit=137
+ Planning:
+   Buffers: shared hit=14
+ Planning Time: 0.236 ms
+ Execution Time: 0.389 ms
+(30 rows)
+
+
+-- Q2: Workshop - a tailor's unfinished sewing, most urgent first
+                                                                                         QUERY PLAN                                                                                          
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit  (cost=1251.32..1251.37 rows=20 width=32) (actual time=1.720..1.726 rows=20.00 loops=1)
+   Buffers: shared hit=2810
+   InitPlan 1
+     ->  Seq Scan on staff  (cost=0.00..1.21 rows=1 width=4) (actual time=0.005..0.006 rows=1.00 loops=1)
+           Filter: ((phone)::text = '08090000005'::text)
+           Rows Removed by Filter: 16
+           Buffers: shared hit=1
+   ->  Sort  (cost=1250.11..1250.37 rows=103 width=32) (actual time=1.719..1.722 rows=20.00 loops=1)
+         Sort Key: o.due_date
+         Sort Method: top-N heapsort  Memory: 27kB
+         Buffers: shared hit=2810
+         ->  Hash Join  (cost=2.80..1247.37 rows=103 width=32) (actual time=0.063..1.676 rows=213.00 loops=1)
+               Hash Cond: (j.garment_type_id = gt.garment_type_id)
+               Buffers: shared hit=2810
+               ->  Nested Loop  (cost=1.57..1245.76 rows=103 width=29) (actual time=0.041..1.613 rows=213.00 loops=1)
+                     Buffers: shared hit=2809
+                     ->  Nested Loop  (cost=1.28..1212.71 rows=103 width=21) (actual time=0.036..1.201 rows=213.00 loops=1)
+                           Buffers: shared hit=2170
+                           ->  Nested Loop  (cost=0.99..1178.44 rows=103 width=21) (actual time=0.031..0.899 rows=213.00 loops=1)
+                                 Buffers: shared hit=1531
+                                 ->  Nested Loop  (cost=0.57..1125.20 rows=103 width=21) (actual time=0.023..0.479 rows=213.00 loops=1)
+                                       Buffers: shared hit=679
+                                       ->  Index Scan using job_assignment_open_idx on job_assignment a  (cost=0.28..341.27 rows=103 width=4) (actual time=0.017..0.079 rows=213.00 loops=1)
+                                             Index Cond: ((staff_id = (InitPlan 1).col1) AND ((task)::text = 'sewing'::text))
+                                             Index Searches: 1
+                                             Buffers: shared hit=40
+                                       ->  Index Scan using garment_job_pkey on garment_job j  (cost=0.29..7.61 rows=1 width=21) (actual time=0.001..0.001 rows=1.00 loops=213)
+                                             Index Cond: (job_id = a.job_id)
+                                             Index Searches: 213
+                                             Buffers: shared hit=639
+                                 ->  Index Scan using order_item_pkey on order_item oi  (cost=0.42..0.52 rows=1 width=8) (actual time=0.002..0.002 rows=1.00 loops=213)
+                                       Index Cond: (order_item_id = j.order_item_id)
+                                       Index Searches: 213
+                                       Buffers: shared hit=852
+                           ->  Index Scan using customer_order_pkey on customer_order o  (cost=0.29..0.33 rows=1 width=8) (actual time=0.001..0.001 rows=1.00 loops=213)
+                                 Index Cond: (order_id = oi.order_id)
+                                 Index Searches: 213
+                                 Buffers: shared hit=639
+                     ->  Index Scan using wearer_pkey on wearer w  (cost=0.29..0.32 rows=1 width=16) (actual time=0.002..0.002 rows=1.00 loops=213)
+                           Index Cond: (wearer_id = j.wearer_id)
+                           Index Searches: 213
+                           Buffers: shared hit=639
+               ->  Hash  (cost=1.10..1.10 rows=10 width=11) (actual time=0.016..0.017 rows=10.00 loops=1)
+                     Buckets: 1024  Batches: 1  Memory Usage: 9kB
+                     Buffers: shared hit=1
+                     ->  Seq Scan on garment_type gt  (cost=0.00..1.10 rows=10 width=11) (actual time=0.011..0.013 rows=10.00 loops=1)
+                           Buffers: shared hit=1
+ Planning:
+   Buffers: shared hit=52
+ Planning Time: 1.002 ms
+ Execution Time: 1.770 ms
+(51 rows)
+
+
+-- Q3: Cutting table - a wearer's most recent measurements
+                                                                                     QUERY PLAN                                                                                     
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort  (cost=40.88..40.90 rows=9 width=19) (actual time=0.060..0.062 rows=9.00 loops=1)
+   Sort Key: mt.name
+   Sort Method: quicksort  Memory: 25kB
+   Buffers: shared hit=12
+   InitPlan 1
+     ->  Limit  (cost=8.32..8.34 rows=1 width=8) (actual time=0.015..0.015 rows=1.00 loops=1)
+           Buffers: shared hit=4
+           ->  Incremental Sort  (cost=8.32..8.36 rows=2 width=8) (actual time=0.014..0.015 rows=1.00 loops=1)
+                 Sort Key: measurement_set.taken_on DESC, measurement_set.measurement_set_id DESC
+                 Presorted Key: measurement_set.taken_on
+                 Full-sort Groups: 1  Sort Method: quicksort  Average Memory: 25kB  Peak Memory: 25kB
+                 Buffers: shared hit=4
+                 ->  Index Scan using measurement_set_wearer_idx on measurement_set  (cost=0.29..8.31 rows=1 width=8) (actual time=0.008..0.009 rows=2.00 loops=1)
+                       Index Cond: (wearer_id = 5004)
+                       Index Searches: 1
+                       Buffers: shared hit=4
+   ->  Nested Loop  (cost=2.09..32.39 rows=9 width=19) (actual time=0.043..0.046 rows=9.00 loops=1)
+         Buffers: shared hit=12
+         ->  Index Scan using measurement_set_measurement_set_id_wearer_id_key on measurement_set ms  (cost=0.29..8.31 rows=1 width=8) (actual time=0.020..0.021 rows=1.00 loops=1)
+               Index Cond: (measurement_set_id = (InitPlan 1).col1)
+               Index Searches: 1
+               Buffers: shared hit=7
+         ->  Hash Join  (cost=1.80..24.00 rows=9 width=19) (actual time=0.022..0.024 rows=9.00 loops=1)
+               Hash Cond: (mv.measurement_type_id = mt.measurement_type_id)
+               Buffers: shared hit=5
+               ->  Index Scan using measurement_value_pkey on measurement_value mv  (cost=0.42..22.58 rows=9 width=14) (actual time=0.006..0.007 rows=9.00 loops=1)
+                     Index Cond: (measurement_set_id = (InitPlan 1).col1)
+                     Index Searches: 1
+                     Buffers: shared hit=4
+               ->  Hash  (cost=1.17..1.17 rows=17 width=13) (actual time=0.010..0.011 rows=17.00 loops=1)
+                     Buckets: 1024  Batches: 1  Memory Usage: 9kB
+                     Buffers: shared hit=1
+                     ->  Seq Scan on measurement_type mt  (cost=0.00..1.17 rows=17 width=13) (actual time=0.006..0.007 rows=17.00 loops=1)
+                           Buffers: shared hit=1
+ Planning:
+   Buffers: shared hit=4
+ Planning Time: 0.178 ms
+ Execution Time: 0.084 ms
+(38 rows)
+
+
+-- Q4: Owner - revenue by account for one month
+                                                                               QUERY PLAN                                                                               
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort  (cost=14255.55..14255.56 rows=4 width=51) (actual time=74.491..74.495 rows=4.00 loops=1)
+   Sort Key: a.code
+   Sort Method: quicksort  Memory: 25kB
+   Buffers: shared hit=3897
+   ->  HashAggregate  (cost=14255.46..14255.51 rows=4 width=51) (actual time=74.474..74.479 rows=4.00 loops=1)
+         Group Key: a.name
+         Batches: 1  Memory Usage: 32kB
+         Buffers: shared hit=3897
+         ->  Hash Join  (cost=2924.16..14217.42 rows=5071 width=28) (actual time=67.544..73.636 rows=3397.00 loops=1)
+               Hash Cond: (jl.account_id = a.account_id)
+               Buffers: shared hit=3897
+               ->  Hash Join  (cost=2922.92..14152.16 rows=19017 width=13) (actual time=67.366..72.308 rows=18825.00 loops=1)
+                     Hash Cond: (jl.entry_id = je.entry_id)
+                     Buffers: shared hit=3896
+                     ->  Seq Scan on journal_line jl  (cost=0.00..9677.46 rows=591146 width=17) (actual time=0.003..26.106 rows=591146.00 loops=1)
+                           Buffers: shared hit=3766
+                     ->  Hash  (cost=2812.76..2812.76 rows=8813 width=4) (actual time=2.381..2.382 rows=8883.00 loops=1)
+                           Buckets: 16384  Batches: 1  Memory Usage: 441kB
+                           Buffers: shared hit=130
+                           ->  Bitmap Heap Scan on journal_entry je  (cost=14.23..2812.76 rows=8813 width=4) (actual time=0.282..1.357 rows=8883.00 loops=1)
+                                 Recheck Cond: ((entry_date >= '2026-09-01'::date) AND (entry_date < '2026-10-01'::date))
+                                 Rows Removed by Index Recheck: 4452
+                                 Heap Blocks: lossy=128
+                                 Buffers: shared hit=130
+                                 ->  Bitmap Index Scan on journal_entry_date_brin  (cost=0.00..12.02 rows=9902 width=0) (actual time=0.020..0.020 rows=1280.00 loops=1)
+                                       Index Cond: ((entry_date >= '2026-09-01'::date) AND (entry_date < '2026-10-01'::date))
+                                       Index Searches: 1
+                                       Buffers: shared hit=2
+               ->  Hash  (cost=1.19..1.19 rows=4 width=23) (actual time=0.010..0.010 rows=4.00 loops=1)
+                     Buckets: 1024  Batches: 1  Memory Usage: 9kB
+                     Buffers: shared hit=1
+                     ->  Seq Scan on account a  (cost=0.00..1.19 rows=4 width=23) (actual time=0.006..0.007 rows=4.00 loops=1)
+                           Filter: ((account_type)::text = 'revenue'::text)
+                           Rows Removed by Filter: 11
+                           Buffers: shared hit=1
+ Planning:
+   Buffers: shared hit=21
+ Planning Time: 0.167 ms
+ Execution Time: 74.618 ms
+(39 rows)
+
+
+-- Q5a: Front desk - finished orders still owing money (through the view)
+                                                                                                                                    QUERY PLAN                                                                                                                                    
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit  (cost=21903.61..21903.66 rows=20 width=60) (actual time=217.960..217.966 rows=20.00 loops=1)
+   Buffers: shared hit=5429
+   ->  Sort  (cost=21903.61..21904.71 rows=440 width=60) (actual time=217.959..217.963 rows=20.00 loops=1)
+         Sort Key: ((COALESCE((round(sum((order_item.quantity * order_item.unit_price)), 2)), '0'::numeric) - COALESCE((sum(CASE WHEN ((payment.payment_kind)::text = 'refund'::text) THEN (- payment.amount) ELSE payment.amount END)), '0'::numeric))) DESC
+         Sort Method: top-N heapsort  Memory: 27kB
+         Buffers: shared hit=5429
+         ->  Nested Loop  (cost=860.47..21891.90 rows=440 width=60) (actual time=185.912..217.009 rows=1241.00 loops=1)
+               Buffers: shared hit=5429
+               ->  Merge Right Join  (cost=860.18..20897.93 rows=440 width=72) (actual time=185.870..210.312 rows=1241.00 loops=1)
+                     Merge Cond: (order_item.order_id = o.order_id)
+                     Filter: ((COALESCE((round(sum((order_item.quantity * order_item.unit_price)), 2)), '0'::numeric) - COALESCE((sum(CASE WHEN ((payment.payment_kind)::text = 'refund'::text) THEN (- payment.amount) ELSE payment.amount END)), '0'::numeric)) > '0'::numeric)
+                     Rows Removed by Filter: 51
+                     Buffers: shared hit=1706
+                     ->  GroupAggregate  (cost=0.42..8454.56 rows=76531 width=36) (actual time=0.016..127.230 rows=100001.00 loops=1)
+                           Group Key: order_item.order_id
+                           Buffers: shared hit=744
+                           ->  Index Only Scan using order_item_order_cover_idx on order_item  (cost=0.42..5867.20 rows=191919 width=15) (actual time=0.009..23.863 rows=191919.00 loops=1)
+                                 Heap Fetches: 0
+                                 Index Searches: 1
+                                 Buffers: shared hit=744
+                     ->  Materialize  (cost=859.76..11468.28 rows=1320 width=40) (actual time=64.087..74.652 rows=1292.00 loops=1)
+                           Storage: Memory  Maximum Storage: 17kB
+                           Buffers: shared hit=962
+                           ->  Merge Left Join  (cost=859.76..11464.98 rows=1320 width=40) (actual time=64.083..73.863 rows=1292.00 loops=1)
+                                 Merge Cond: (o.order_id = payment.order_id)
+                                 Buffers: shared hit=962
+                                 ->  Sort  (cost=859.34..862.64 rows=1320 width=8) (actual time=0.301..0.533 rows=1292.00 loops=1)
+                                       Sort Key: o.order_id
+                                       Sort Method: quicksort  Memory: 79kB
+                                       Buffers: shared hit=56
+                                       ->  Bitmap Heap Scan on customer_order o  (cost=18.51..790.93 rows=1320 width=8) (actual time=0.037..0.166 rows=1292.00 loops=1)
+                                             Recheck Cond: ((status)::text = 'ready'::text)
+                                             Heap Blocks: exact=53
+                                             Buffers: shared hit=56
+                                             ->  Bitmap Index Scan on customer_order_open_idx  (cost=0.00..18.18 rows=1320 width=0) (actual time=0.022..0.022 rows=1292.00 loops=1)
+                                                   Index Cond: ((status)::text = 'ready'::text)
+                                                   Index Searches: 1
+                                                   Buffers: shared hit=3
+                                 ->  GroupAggregate  (cost=0.42..9400.59 rows=94874 width=36) (actual time=0.009..67.698 rows=95957.00 loops=1)
+                                       Group Key: payment.order_id
+                                       Buffers: shared hit=906
+                                       ->  Index Only Scan using payment_order_cover_idx on payment  (cost=0.42..6383.37 rows=183130 width=18) (actual time=0.006..16.262 rows=183130.00 loops=1)
+                                             Heap Fetches: 0
+                                             Index Searches: 1
+                                             Buffers: shared hit=906
+               ->  Index Scan using customer_pkey on customer c  (cost=0.29..2.26 rows=1 width=28) (actual time=0.004..0.004 rows=1.00 loops=1241)
+                     Index Cond: (customer_id = o.customer_id)
+                     Index Searches: 1241
+                     Buffers: shared hit=3723
+ Planning:
+   Buffers: shared hit=12
+ Planning Time: 0.351 ms
+ Execution Time: 218.072 ms
+(53 rows)
+
+
+-- Q5b: The same question, rewritten to total only the orders that qualify
+                                                                                                                                 QUERY PLAN                                                                                                                                  
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit  (cost=13775.09..13775.14 rows=20 width=60) (actual time=19.728..19.739 rows=20.00 loops=1)
+   Buffers: shared hit=11538
+   ->  Sort  (cost=13775.09..13776.19 rows=440 width=60) (actual time=19.727..19.732 rows=20.00 loops=1)
+         Sort Key: (((COALESCE(sum((order_item.quantity * order_item.unit_price)), '0'::numeric)) - (COALESCE(sum(CASE WHEN ((payment.payment_kind)::text = 'refund'::text) THEN (- payment.amount) ELSE payment.amount END), '0'::numeric)))) DESC
+         Sort Method: top-N heapsort  Memory: 27kB
+         Buffers: shared hit=11538
+         ->  Nested Loop  (cost=9.53..13763.38 rows=440 width=60) (actual time=0.042..18.933 rows=1241.00 loops=1)
+               Buffers: shared hit=11538
+               ->  Nested Loop  (cost=9.24..12769.41 rows=440 width=72) (actual time=0.038..13.997 rows=1241.00 loops=1)
+                     Join Filter: (((COALESCE(sum((order_item.quantity * order_item.unit_price)), '0'::numeric)) - (COALESCE(sum(CASE WHEN ((payment.payment_kind)::text = 'refund'::text) THEN (- payment.amount) ELSE payment.amount END), '0'::numeric))) > '0'::numeric)
+                     Rows Removed by Join Filter: 51
+                     Buffers: shared hit=7815
+                     ->  Nested Loop  (cost=4.77..6832.71 rows=1320 width=40) (actual time=0.029..7.774 rows=1292.00 loops=1)
+                           Buffers: shared hit=3938
+                           ->  Index Scan using customer_order_open_idx on customer_order o  (cost=0.28..879.51 rows=1320 width=8) (actual time=0.016..0.638 rows=1292.00 loops=1)
+                                 Index Cond: ((status)::text = 'ready'::text)
+                                 Index Searches: 1
+                                 Buffers: shared hit=56
+                           ->  Aggregate  (cost=4.49..4.50 rows=1 width=32) (actual time=0.005..0.005 rows=1.00 loops=1292)
+                                 Buffers: shared hit=3882
+                                 ->  Index Only Scan using order_item_order_cover_idx on order_item  (cost=0.42..4.47 rows=3 width=11) (actual time=0.002..0.003 rows=1.92 loops=1292)
+                                       Index Cond: (order_id = o.order_id)
+                                       Heap Fetches: 0
+                                       Index Searches: 1292
+                                       Buffers: shared hit=3882
+                     ->  Aggregate  (cost=4.47..4.48 rows=1 width=32) (actual time=0.004..0.004 rows=1.00 loops=1292)
+                           Buffers: shared hit=3877
+                           ->  Index Only Scan using payment_order_cover_idx on payment  (cost=0.42..4.45 rows=2 width=14) (actual time=0.002..0.002 rows=1.00 loops=1292)
+                                 Index Cond: (order_id = o.order_id)
+                                 Heap Fetches: 0
+                                 Index Searches: 1292
+                                 Buffers: shared hit=3877
+               ->  Index Scan using customer_pkey on customer c  (cost=0.29..2.26 rows=1 width=28) (actual time=0.003..0.003 rows=1.00 loops=1241)
+                     Index Cond: (customer_id = o.customer_id)
+                     Index Searches: 1241
+                     Buffers: shared hit=3723
+ Planning:
+   Buffers: shared hit=12
+ Planning Time: 0.298 ms
+ Execution Time: 19.797 ms
+(40 rows)
+
+
+-- Q6: Front desk - find a customer from part of their name
+                                                             QUERY PLAN                                                              
+-------------------------------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on customer  (cost=56.29..139.88 rows=25 width=28) (actual time=0.192..0.215 rows=36.00 loops=1)
+   Recheck Cond: ((full_name)::text ~~* '%kemi ade%'::text)
+   Rows Removed by Index Recheck: 8
+   Heap Blocks: exact=14
+   Buffers: shared hit=29
+   ->  Bitmap Index Scan on customer_name_trgm_idx  (cost=0.00..56.28 rows=25 width=0) (actual time=0.182..0.182 rows=44.00 loops=1)
+         Index Cond: ((full_name)::text ~~* '%kemi ade%'::text)
+         Index Searches: 1
+         Buffers: shared hit=15
+ Planning:
+   Buffers: shared hit=1
+ Planning Time: 0.147 ms
+ Execution Time: 0.239 ms
+(13 rows)
+
+
+-- Q7: Ledger - the check the balance trigger runs for every journal line
+                                                                  QUERY PLAN                                                                  
+----------------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate  (cost=8.48..8.49 rows=1 width=32) (actual time=0.015..0.016 rows=1.00 loops=1)
+   Buffers: shared hit=4
+   ->  Index Scan using journal_line_entry_idx on journal_line  (cost=0.42..8.46 rows=2 width=9) (actual time=0.011..0.012 rows=2.00 loops=1)
+         Index Cond: (entry_id = 150000)
+         Index Searches: 1
+         Buffers: shared hit=4
+ Planning Time: 0.046 ms
+ Execution Time: 0.025 ms
+(8 rows)
+
