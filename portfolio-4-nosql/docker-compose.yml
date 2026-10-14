@@ -1,0 +1,21 @@
+# MongoDB 8 for Portfolio 4.
+#
+#   docker compose up -d      start
+#   docker compose down       stop (add -v to delete the stored data too)
+#
+# The port is published on 127.0.0.1 only, so the database cannot be
+# reached from outside this machine. No login is configured for that reason.
+services:
+  mongo:
+    image: mongo:8.0
+    container_name: deevas-mongo
+    ports:
+      - "127.0.0.1:27017:27017"
+    volumes:
+      - mongo-data:/data/db
+      # this folder, read-only, so the container can see the scripts and
+      # the exported JSON files
+      - ./:/work:ro
+
+volumes:
+  mongo-data:

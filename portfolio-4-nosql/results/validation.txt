@@ -1,0 +1,17 @@
+Schema attached to orders.
+Stored orders that break the schema: 0 of 100001
+
+0. A correct order (should be accepted)
+   ACCEPTED
+
+1. A status that is not in the list
+   refused: status > enum
+
+2. A ready-made line with no SKU
+   refused: items > item 0 > oneOf
+
+3. A quantity of zero
+   refused: items > item 0 > quantity > minimum
+
+4. A total stored as text
+   refused: total > bsonType

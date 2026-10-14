@@ -1,0 +1,222 @@
+
+========================================================================
+PART 1. What the documents look like
+========================================================================
+
+Collections:
+   orders    100001 documents, average 1155 bytes, 110.2 MB of data, 27.2 MB on disk
+   wearers    39783 documents, average 331 bytes, 12.6 MB of data, 4.4 MB on disk
+   styles        14 documents, average 1382 bytes, 0.0 MB of data, 0.0 MB on disk
+
+One order. In PostgreSQL this is rows from more than a dozen tables.
+
+{
+  _id: 1,
+  orderDate: ISODate('2026-10-05T00:00:00.000Z'),
+  dueDate: ISODate('2026-10-26T00:00:00.000Z'),
+  status: 'in_production',
+  customer: {
+    id: 1,
+    name: 'Ngozi Adeyemi',
+    phone: '08000000201'
+  },
+  takenBy: 'Chidimma Nwabulue',
+  items: [
+    {
+      kind: 'bespoke',
+      description: 'Classic kaftan in ivory brocade',
+      quantity: 1,
+      unitPrice: Decimal128('45000.00'),
+      wearer: {
+        id: 2,
+        name: 'Femi Adeyemi'
+      },
+      garment: 'Kaftan',
+      style: 'Classic kaftan',
+      jobStatus: 'cutting',
+      measurements: {
+        bicep: 15,
+        chest: 42,
+        neck: 16.5,
+        shoulder: 19,
+        sleeve: 25.5,
+        top_len: 44
+      },
+      tasks: [
+        {
+          task: 'cutting',
+          staff: 'Kofi Mensah',
+          assignedAt: ISODate('2026-10-14T04:52:54.000Z')
+        },
+        {
+          task: 'sewing',
+          staff: 'Zainab Yusuf',
+          assignedAt: ISODate('2026-10-14T04:52:54.000Z')
+        }
+      ],
+      fittings: [
+        {
+          startsAt: ISODate('2026-10-19T09:00:00.000Z'),
+          staff: 'Zainab Yusuf',
+          outcome: 'scheduled'
+        }
+      ]
+    },
+    {
+      kind: 'bespoke',
+      description: 'A-line dress in indigo adire',
+      quantity: 1,
+      unitPrice: Decimal128('38000.00'),
+      wearer: {
+        id: 3,
+        name: 'Ngozi Adeyemi'
+      },
+      garment: 'Dress',
+      style: 'A-line dress',
+      jobStatus: 'queued',
+      measurements: {
+        bust: 37,
+        dress_len: 40,
+        hip: 41.5,
+        shoulder: 15.5,
+        waist: 31
+      }
+    },
+    {
+      kind: 'material',
+      quantity: 3,
+      unitPrice: Decimal128('5200.00'),
+      material: 'Indigo adire',
+      unit: 'yard'
+    }
+  ],
+  payments: [
+    {
+      paidAt: ISODate('2026-10-05T10:15:00.000Z'),
+      amount: Decimal128('50000.00'),
+      method: 'bank_transfer',
+      kind: 'deposit'
+    }
+  ],
+  total: Decimal128('98600.00'),
+  paid: Decimal128('50000.00'),
+  balance: Decimal128('48600.00')
+}
+
+One wearer who has been measured twice. Both sets are in the document.
+
+{
+  _id: 1004,
+  name: 'Hauwa Boateng',
+  relationship: 'self',
+  customer: {
+    id: 1004,
+    name: 'Hauwa Boateng',
+    phone: '08100000004'
+  },
+  measurements: [
+    {
+      takenOn: ISODate('2026-08-25T00:00:00.000Z'),
+      takenBy: 'Kwame Owusu',
+      values: {
+        ankle: 14.2,
+        chest: 35.8,
+        neck: 17,
+        shorts_len: 21.7,
+        skirt_len: 18.4,
+        sleeve: 24.7,
+        trouser_len: 39,
+        waist: 37.3,
+        wrist: 6.3
+      }
+    },
+    {
+      takenOn: ISODate('2025-11-26T00:00:00.000Z'),
+      takenBy: 'Sola Ogunleye',
+      values: {
+        bicep: 11.1,
+        bust: 40.7,
+        dress_len: 55.2,
+        hip: 51.7,
+        jacket_len: 29.4,
+        shoulder: 20.2,
+        thigh: 28.5,
+        top_len: 42.3
+      }
+    }
+  ]
+}
+
+========================================================================
+PART 2. The Portfolio 2 questions
+========================================================================
+
+-- Without indexes --
+   Q1 one customer's orders        : returned 45, examined 100001 documents and 0 index keys, 39 ms
+      plan: SORT <- PROJECTION_SIMPLE <- COLLSCAN
+   Q2 a tailor's unfinished sewing : returned 205, examined 100001 documents and 0 index keys, 87 ms
+      plan: SORT <- PROJECTION_DEFAULT <- COLLSCAN
+   Q3 a wearer's latest measurements: returned 1, examined 1 documents and 1 index keys, 0 ms
+      plan: PROJECTION_DEFAULT <- IDHACK
+   Q4 revenue for one month         : 80 ms
+   Q5 finished orders owing money  : returned 20, examined 100001 documents and 0 index keys, 42 ms
+      plan: PROJECTION_DEFAULT <- SORT <- COLLSCAN
+
+-- With indexes --
+   Q1 one customer's orders        : returned 45, examined 45 documents and 45 index keys, 1 ms
+      plan: PROJECTION_SIMPLE <- FETCH <- IXSCAN(customer_orders)
+   Q2 a tailor's unfinished sewing : returned 205, examined 278 documents and 278 index keys, 4 ms
+      plan: SORT <- PROJECTION_DEFAULT <- FETCH <- IXSCAN(open_work_by_staff)
+   Q3 a wearer's latest measurements: returned 1, examined 1 documents and 1 index keys, 0 ms
+      plan: PROJECTION_DEFAULT <- IDHACK
+   Q4 revenue for one month         : 14 ms
+   Q5 finished orders owing money  : returned 20, examined 20 documents and 20 index keys, 0 ms
+      plan: LIMIT <- PROJECTION_DEFAULT <- FETCH <- IXSCAN(status_balance)
+
+Answers:
+   Q1: 45 orders for customer 1100, newest 2026-10-08
+   Q2: 205 orders with unfinished sewing for Bola Akinwale, most urgent due 2026-09-06
+   Q3: Mariam Nwosu, measured 2025-12-24: ankle 18.9, chest 37.1, neck 14.6, shorts_len 21.7, skirt_len 29.8, sleeve 25.2, trouser_len 37.6, waist 43.5, wrist 8
+   Q4: revenue for September 2026 by kind of line
+         alteration        3,973,500.00
+         bespoke         146,064,200.00
+         material         31,715,000.00
+         ready_made       59,255,800.00
+   Q5: the three largest balances on finished orders
+         order 98881  Dayo Ofori             291,900.00
+         order 98862  Tolu Ajayi             266,300.00
+         order 99662  Bisi Bello             260,600.00
+
+Index sizes on orders (kB):
+   _id_                 1068
+   customer_orders      1336
+   open_work_by_staff   44
+   status_due           1112
+   status_balance       1032
+
+========================================================================
+PART 3. Writing
+========================================================================
+
+A. Take the balance on a finished order.
+   The payment is added, the totals change and the status moves on,
+   all in one update of one document. No transaction is needed.
+
+   before: order 94599  status ready  paid 8,600.00  balance 8,600.00
+   after:  order 94599  status collected  paid 17,200.00  balance 0.00  payments 2
+
+B. Sell ready-to-wear stock, but only if there is enough.
+   The stock test is part of the update's filter, so checking and
+   changing cannot be separated by another session.
+
+   KAF-CLS-L-BLK has 9 in stock.
+   Sell 9: done
+   Sell 1 more: refused, nothing changed
+
+C. Record details that only some garments have.
+   Two styles gain an 'attributes' object with different fields,
+   and a list of tags. The other styles are not touched.
+
+   Three-piece agbada   {"pieces":3,"embroidery":"hand, chest and sleeves","cap":true}
+   A-line dress         {"neckline":"V","length":"knee","lined":true}
+   Styles with attributes: 2 of 14
