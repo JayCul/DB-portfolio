@@ -1,0 +1,270 @@
+
+============================================================================
+STEP 0. Build both servers from nothing
+============================================================================
+-- Primary created and loaded with the Portfolio 1 data, replica copied from it with
+-- pg_basebackup and streaming changes, 8 seconds after starting.
+
+============================================================================
+STEP 1. One primary, one replica
+============================================================================
+-- Each server reports whether it is in recovery, which is how PostgreSQL
+-- describes a replica that is replaying changes from somewhere else.
+[primary] SELECT current_setting('cluster_name') AS server, pg_is_in_recovery() AS is_replica;
+           server  | is_replica 
+          ---------+------------
+           primary | f
+          (1 row)
+[replica] SELECT current_setting('cluster_name') AS server, pg_is_in_recovery() AS is_replica;
+            server  | is_replica 
+          ----------+------------
+           replica1 | t
+          (1 row)
+
+-- The primary's view of the replica:
+[primary] SELECT application_name, client_addr, state, sync_state, replay_lag
+          FROM pg_stat_replication;
+           application_name | client_addr |   state   | sync_state |   replay_lag    
+          ------------------+-------------+-----------+------------+-----------------
+           replica1         | 172.21.0.3  | streaming | async      | 00:00:00.028693
+          (1 row)
+-- The replica's view of the primary:
+[replica] SELECT status, sender_host, slot_name FROM pg_stat_wal_receiver;
+            status   | sender_host | slot_name 
+          -----------+-------------+-----------
+           streaming | primary     | replica1
+          (1 row)
+
+============================================================================
+STEP 2. A write on the primary appears on the replica
+============================================================================
+[primary] INSERT INTO customer (full_name, phone) VALUES ('Replication Test', '08070000001');
+          INSERT 0 1
+[replica] SELECT customer_id, full_name, phone FROM customer WHERE phone = '08070000001';
+           customer_id |    full_name     |    phone    
+          -------------+------------------+-------------
+                     4 | Replication Test | 08070000001
+          (1 row)
+-- Visible on the replica 139 ms after the insert returned. Much of that is
+-- the time each docker exec takes; the server's own measure of the delay is below.
+[primary] SELECT application_name, write_lag, flush_lag, replay_lag FROM pg_stat_replication;
+           application_name |    write_lag    |    flush_lag    |   replay_lag    
+          ------------------+-----------------+-----------------+-----------------
+           replica1         | 00:00:00.000374 | 00:00:00.001546 | 00:00:00.001932
+          (1 row)
+
+============================================================================
+STEP 3. The replica refuses writes
+============================================================================
+-- It is a read-only copy. Every change must go through the primary.
+[replica] INSERT INTO customer (full_name, phone) VALUES ('Written To Replica', '08070000002');
+          ERROR:  cannot execute INSERT in a read-only transaction
+
+============================================================================
+STEP 4. Asynchronous replication allows stale reads
+============================================================================
+-- The primary confirms a commit without waiting for the replica. On a
+-- quiet local network the gap is a fraction of a second. Pausing the
+-- replica's replay stretches it, as a slow network or a busy replica would.
+[replica] SELECT pg_wal_replay_pause();
+           pg_wal_replay_pause 
+          ---------------------
+          (1 row)
+[primary] UPDATE customer SET full_name = 'Replication Test Renamed' WHERE phone = '08070000001';
+          UPDATE 1
+[primary] SELECT full_name FROM customer WHERE phone = '08070000001';
+                  full_name         
+          --------------------------
+           Replication Test Renamed
+          (1 row)
+[replica] SELECT full_name FROM customer WHERE phone = '08070000001';
+              full_name     
+          ------------------
+           Replication Test
+          (1 row)
+-- The two servers give different answers to the same question.
+
+[replica] SELECT pg_wal_replay_resume();
+           pg_wal_replay_resume 
+          ----------------------
+          (1 row)
+[replica] SELECT full_name FROM customer WHERE phone = '08070000001';
+                  full_name         
+          --------------------------
+           Replication Test Renamed
+          (1 row)
+-- Once replay resumes the replica catches up: it is eventually consistent.
+
+============================================================================
+STEP 5. Synchronous replication: consistency at the cost of availability
+============================================================================
+-- The primary is told to wait for replica1 to confirm every commit.
+[primary] ALTER SYSTEM SET synchronous_standby_names = 'replica1';
+          ALTER SYSTEM
+[primary] SELECT pg_reload_conf();
+           pg_reload_conf 
+          ----------------
+           t
+          (1 row)
+[primary] SELECT application_name, state, sync_state FROM pg_stat_replication;
+           application_name |   state   | sync_state 
+          ------------------+-----------+------------
+           replica1         | streaming | sync
+          (1 row)
+[primary] INSERT INTO customer (full_name, phone) VALUES ('Synchronous Write', '08070000003');
+          INSERT 0 1
+-- Committed and confirmed by the replica in 163 ms.
+
+-- Now the replica goes down, and a member of staff records a new customer.
+[docker] docker stop deevas-pg-replica
+[primary] INSERT INTO customer (full_name, phone) VALUES ('Unconfirmed Write', '08070000004');
+          ... no reply after 5 s
+
+-- A second session on the primary shows why: the insert is waiting for the replica.
+[primary] SELECT pid, wait_event_type, wait_event, now() - query_start AS waiting_for
+          FROM pg_stat_activity WHERE wait_event = 'SyncRep';
+           pid | wait_event_type | wait_event |   waiting_for   
+          -----+-----------------+------------+-----------------
+           225 | IPC             | SyncRep    | 00:00:04.998186
+          (1 row)
+[primary] SELECT full_name FROM customer WHERE phone = '08070000004';
+           full_name 
+          -----------
+          (0 rows)
+-- The row is already written to the primary's disk, but nobody else can see it,
+-- and the person who typed it has not been told it is saved. Every write will
+-- stall like this for as long as the replica is down.
+
+[docker] docker start deevas-pg-replica
+[primary] (the waiting insert now completes, 5.6 s after it was sent)
+          INSERT 0 1
+[primary] SELECT full_name FROM customer WHERE phone = '08070000004';
+               full_name     
+          -------------------
+           Unconfirmed Write
+          (1 row)
+[replica] SELECT full_name FROM customer WHERE phone = '08070000004';
+               full_name     
+          -------------------
+           Unconfirmed Write
+          (1 row)
+
+-- Back to asynchronous replication for the rest of the demonstration.
+[primary] ALTER SYSTEM RESET synchronous_standby_names;
+          ALTER SYSTEM
+[primary] SELECT pg_reload_conf();
+           pg_reload_conf 
+          ----------------
+           t
+          (1 row)
+
+============================================================================
+STEP 6. Partitioning: how a shard key divides the data
+============================================================================
+-- Sharding spreads one table across several servers by a key. A partitioned
+-- table does the same within one server, so it shows the effect of the choice.
+-- Here 100,000 order records are split into four parts by customer_id.
+[primary] CREATE TABLE order_history (
+              order_id    integer,
+              customer_id integer,
+              order_date  date,
+              total       numeric(12,2)
+          ) PARTITION BY HASH (customer_id);
+          CREATE TABLE
+[primary] DO $$
+          BEGIN
+              FOR i IN 0..3 LOOP
+                  EXECUTE format('CREATE TABLE order_history_p%s PARTITION OF order_history
+                                  FOR VALUES WITH (MODULUS 4, REMAINDER %s)', i, i);
+              END LOOP;
+          END $$;
+          DO
+[primary] INSERT INTO order_history
+          SELECT n, 1001 + (n * 7919) % 20000, DATE '2023-10-01' + n % 1100, 5000 + (n % 60) * 1000
+          FROM generate_series(1, 100000) AS n;
+          INSERT 0 100000
+[primary] ANALYZE order_history;
+          ANALYZE
+[primary] SELECT tableoid::regclass AS part, count(*) AS orders
+          FROM order_history GROUP BY 1 ORDER BY 1;
+                 part       | orders 
+          ------------------+--------
+           order_history_p0 |  24900
+           order_history_p1 |  25245
+           order_history_p2 |  25115
+           order_history_p3 |  24740
+          (4 rows)
+-- The rows are spread evenly. A question about one customer goes to one part:
+[primary] EXPLAIN (COSTS OFF) SELECT * FROM order_history WHERE customer_id = 1100;
+                           QUERY PLAN                 
+          --------------------------------------------
+           Seq Scan on order_history_p1 order_history
+             Filter: (customer_id = 1100)
+          (2 rows)
+-- A question about dates has to ask every part and combine the answers:
+[primary] EXPLAIN (COSTS OFF) SELECT sum(total) FROM order_history
+          WHERE order_date >= DATE '2026-09-01';
+                                  QUERY PLAN                        
+          ----------------------------------------------------------
+           Aggregate
+             ->  Append
+                   ->  Seq Scan on order_history_p0 order_history_1
+                         Filter: (order_date >= '2026-09-01'::date)
+                   ->  Seq Scan on order_history_p1 order_history_2
+                         Filter: (order_date >= '2026-09-01'::date)
+                   ->  Seq Scan on order_history_p2 order_history_3
+                         Filter: (order_date >= '2026-09-01'::date)
+                   ->  Seq Scan on order_history_p3 order_history_4
+                         Filter: (order_date >= '2026-09-01'::date)
+          (10 rows)
+-- The new table and its rows were copied to the replica like any other change:
+[replica] SELECT count(*) FROM order_history;
+           count  
+          --------
+           100000
+          (1 row)
+
+============================================================================
+STEP 7. Failover: the primary crashes and the replica takes over
+============================================================================
+[primary] INSERT INTO customer (full_name, phone) VALUES ('Before Failover', '08070000005');
+          INSERT 0 1
+
+[docker] docker kill deevas-pg-primary
+-- The primary is gone, as if the machine had lost power.
+[replica] SELECT count(*) AS customers FROM customer;
+           customers 
+          -----------
+                   7
+          (1 row)
+-- The replica still answers reads, but it cannot take orders:
+[replica] INSERT INTO customer (full_name, phone) VALUES ('During Outage', '08070000006');
+          ERROR:  cannot execute INSERT in a read-only transaction
+
+-- Promote the replica to be the new primary.
+[replica] SELECT pg_promote();
+           pg_promote 
+          ------------
+           t
+          (1 row)
+[replica] SELECT pg_is_in_recovery() AS is_replica;
+           is_replica 
+          ------------
+           f
+          (1 row)
+[replica] INSERT INTO customer (full_name, phone) VALUES ('After Failover', '08070000007');
+          INSERT 0 1
+[replica] SELECT full_name, phone FROM customer
+          WHERE phone LIKE '0807000000%' ORDER BY phone;
+                  full_name         |    phone    
+          --------------------------+-------------
+           Replication Test Renamed | 08070000001
+           Synchronous Write        | 08070000003
+           Unconfirmed Write        | 08070000004
+           Before Failover          | 08070000005
+           After Failover           | 08070000007
+          (5 rows)
+-- Writes were impossible for 1.2 s, from the crash to the first
+-- successful insert on the new primary. Most of that is this script's own pace;
+-- an automatic failover tool would act within seconds of noticing the crash.
+-- Every write that reached the replica before the crash survived.
