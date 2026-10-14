@@ -199,12 +199,23 @@ SELECT s.measurement_set_id, s.wearer_id,
   FROM _mset s
   JOIN _tailor t ON t.rn = 1 + floor(s.r_staff * (SELECT count(*) FROM _tailor))::int;
 
--- roughly half of the measurement types are recorded in each set
+-- Roughly half of the measurement types are recorded in each set. Each
+-- value is drawn from a believable range for that part of the body, in
+-- inches. A type that is not listed here falls back to 10-45.
 INSERT INTO measurement_value (measurement_set_id, measurement_type_id, value_in)
 SELECT s.measurement_set_id, mt.measurement_type_id,
-       round((10 + random() * 35)::numeric, 1)
+       round((COALESCE(r.low, 10)
+              + random() * (COALESCE(r.high, 45) - COALESCE(r.low, 10)))::numeric, 1)
   FROM _mset s
  CROSS JOIN measurement_type mt
+  LEFT JOIN (VALUES
+        ('NECK',        13, 19), ('SHOULDER',   14, 21), ('CHEST',     32, 50),
+        ('BUST',        30, 48), ('WAIST',      26, 46), ('HIP',       32, 52),
+        ('SLEEVE',      22, 27), ('BICEP',      10, 18), ('WRIST',      6,  9),
+        ('TOP_LEN',     24, 46), ('TROUSER_LEN', 36, 46), ('THIGH',    18, 30),
+        ('ANKLE',       12, 20), ('DRESS_LEN',  34, 60), ('SKIRT_LEN', 18, 40),
+        ('JACKET_LEN',  26, 34), ('SHORTS_LEN', 16, 24)
+       ) AS r (code, low, high) ON r.code = mt.code
  WHERE (s.measurement_set_id + mt.measurement_type_id) % 2 = 0;
 
 
