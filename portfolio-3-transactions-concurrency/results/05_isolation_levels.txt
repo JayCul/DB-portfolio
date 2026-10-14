@@ -1,0 +1,88 @@
+==============================================================================
+05_isolation_levels: Isolation levels - READ COMMITTED against REPEATABLE READ
+==============================================================================
+
+-- PART 1. The owner runs a stock report in session A. While it is open,
+-- session B sells 5 yards. At READ COMMITTED each statement sees whatever
+-- was committed when that statement started.
+
+[A] BEGIN ISOLATION LEVEL READ COMMITTED;
+        BEGIN
+[A] SELECT qty_on_hand FROM material WHERE material_id = :velvet;
+         qty_on_hand 
+        -------------
+               20.00
+        (1 row)
+[B] UPDATE material SET qty_on_hand = qty_on_hand - 5 WHERE material_id = :velvet;
+        UPDATE 1
+[A] SELECT qty_on_hand FROM material WHERE material_id = :velvet;
+         qty_on_hand 
+        -------------
+               15.00
+        (1 row)
+[A] COMMIT;
+        COMMIT
+
+-- The same question gave two answers inside one transaction: a
+-- non-repeatable read. A report built from several queries would not add up.
+
+-- PART 2. The same report at REPEATABLE READ. The transaction works from
+-- one snapshot, taken at its first query.
+
+[A] BEGIN ISOLATION LEVEL REPEATABLE READ;
+        BEGIN
+[A] SELECT qty_on_hand FROM material WHERE material_id = :velvet;
+         qty_on_hand 
+        -------------
+               15.00
+        (1 row)
+[B] UPDATE material SET qty_on_hand = qty_on_hand - 5 WHERE material_id = :velvet;
+        UPDATE 1
+[A] SELECT qty_on_hand FROM material WHERE material_id = :velvet;
+         qty_on_hand 
+        -------------
+               15.00
+        (1 row)
+[A] COMMIT;
+        COMMIT
+[A] SELECT qty_on_hand FROM material WHERE material_id = :velvet;
+         qty_on_hand 
+        -------------
+               10.00
+        (1 row)
+
+-- Inside the transaction the answer stayed at 15. B's sale was not
+-- blocked, and A sees it as soon as its own transaction ends.
+
+-- PART 3. The price of that consistency. A transaction at REPEATABLE READ
+-- tries to change a row that another session changed after its snapshot.
+
+[A] BEGIN ISOLATION LEVEL REPEATABLE READ;
+        BEGIN
+[A] SELECT qty_on_hand FROM material WHERE material_id = :velvet;
+         qty_on_hand 
+        -------------
+               10.00
+        (1 row)
+[B] UPDATE material SET qty_on_hand = qty_on_hand - 2 WHERE material_id = :velvet;
+        UPDATE 1
+[A] UPDATE material SET qty_on_hand = qty_on_hand - 3 WHERE material_id = :velvet;
+        ERROR:  could not serialize access due to concurrent update
+[A] ROLLBACK;
+        ROLLBACK
+
+-- PostgreSQL will not apply A's change on top of a row version A never
+-- saw. The program has to start the transaction again. A second attempt
+-- reads the current value and succeeds.
+
+[A] BEGIN ISOLATION LEVEL REPEATABLE READ;
+        BEGIN
+[A] UPDATE material SET qty_on_hand = qty_on_hand - 3 WHERE material_id = :velvet;
+        UPDATE 1
+[A] COMMIT;
+        COMMIT
+[A] SELECT qty_on_hand FROM material WHERE material_id = :velvet;
+         qty_on_hand 
+        -------------
+                5.00
+        (1 row)

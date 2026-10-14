@@ -1,0 +1,52 @@
+==============================================================================
+03_lost_update: The problem - two sales of the same fabric lose an update
+==============================================================================
+
+-- There are 20 yards of velvet. Two members of staff each sell 12 yards
+-- at the same moment. Each program reads the quantity, subtracts 12 in
+-- its own memory and writes the answer back. Both run at the default
+-- isolation level, READ COMMITTED.
+
+[A] BEGIN;
+        BEGIN
+[A] SELECT qty_on_hand FROM material WHERE material_id = :velvet;
+         qty_on_hand 
+        -------------
+               20.00
+        (1 row)
+[B] BEGIN;
+        BEGIN
+[B] SELECT qty_on_hand FROM material WHERE material_id = :velvet;
+         qty_on_hand 
+        -------------
+               20.00
+        (1 row)
+
+-- Both have read 20. Both decide there is enough, and both will write 8.
+
+[A] UPDATE material SET qty_on_hand = 8 WHERE material_id = :velvet;
+        UPDATE 1
+[A] INSERT INTO stock_movement (material_id, movement_type, quantity, recorded_by)
+    VALUES (:velvet, 'sale', -12, :staff);
+        INSERT 0 1
+[A] COMMIT;
+        COMMIT
+[B] UPDATE material SET qty_on_hand = 8 WHERE material_id = :velvet;
+        UPDATE 1
+[B] INSERT INTO stock_movement (material_id, movement_type, quantity, recorded_by)
+    VALUES (:velvet, 'sale', -12, :staff);
+        INSERT 0 1
+[B] COMMIT;
+        COMMIT
+
+-- Neither session saw an error. But 24 yards have been sold from a bolt
+-- of 20, and the shelf count disagrees with the movement log.
+
+[A] SELECT m.qty_on_hand AS shelf_count,
+    (SELECT sum(quantity) FROM stock_movement WHERE material_id = m.material_id) AS log_total
+    FROM material m
+    WHERE m.material_id = :velvet;
+         shelf_count | log_total 
+        -------------+-----------
+                8.00 |     -4.00
+        (1 row)

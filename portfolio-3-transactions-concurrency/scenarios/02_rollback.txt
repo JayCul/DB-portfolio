@@ -1,0 +1,58 @@
+title: Rollback, savepoints and a commit that fails
+
+# PART 1. Someone tries to sell 50 yards of velvet when 20 are on the
+# shelf. The order and its line are written before the stock update fails.
+
+A: BEGIN;
+A: INSERT INTO customer_order (customer_id, taken_by, notes)
+   VALUES (:customer, :staff, 'Portfolio 3 exercise')
+   RETURNING order_id \gset
+A: INSERT INTO order_item (order_id, item_kind, material_id, quantity, unit_price)
+   VALUES (:order_id, 'material', :velvet, 50, 8000);
+A: UPDATE material SET qty_on_hand = qty_on_hand - 50 WHERE material_id = :velvet;
+
+# The transaction is now marked as failed. PostgreSQL refuses any more
+# work in it, and answers COMMIT with ROLLBACK.
+
+A: SELECT qty_on_hand FROM material WHERE material_id = :velvet;
+A: COMMIT;
+
+# The order and line written before the error are gone as well.
+
+A: SELECT count(*) AS exercise_orders FROM customer_order WHERE notes = 'Portfolio 3 exercise';
+
+# PART 2. An order for 4 yards of lining and 50 yards of velvet. The
+# velvet fails again, but a savepoint lets the lining go through.
+
+A: BEGIN;
+A: INSERT INTO customer_order (customer_id, taken_by, notes)
+   VALUES (:customer, :staff, 'Portfolio 3 exercise')
+   RETURNING order_id \gset
+A: INSERT INTO order_item (order_id, item_kind, material_id, quantity, unit_price)
+   VALUES (:order_id, 'material', :lining, 4, 1500)
+   RETURNING order_item_id \gset
+A: INSERT INTO stock_movement (material_id, movement_type, quantity, order_item_id, recorded_by)
+   VALUES (:lining, 'sale', -4, :order_item_id, :staff);
+A: UPDATE material SET qty_on_hand = qty_on_hand - 4 WHERE material_id = :lining;
+A: SAVEPOINT velvet_line;
+A: UPDATE material SET qty_on_hand = qty_on_hand - 50 WHERE material_id = :velvet;
+A: ROLLBACK TO SAVEPOINT velvet_line;
+A: COMMIT;
+
+# Only the work after the savepoint was undone.
+
+A: SELECT name, qty_on_hand FROM material WHERE material_id IN (:velvet, :lining) ORDER BY name;
+
+# PART 3. A journal entry is keyed in with a mistake: 40,000 debited but
+# 4,000 credited. Both lines are accepted. The rule that debits equal
+# credits is checked at COMMIT, so it is the COMMIT that fails.
+
+A: BEGIN;
+A: INSERT INTO journal_entry (description, posted_by)
+   VALUES ('P3 exercise: mistyped entry', :staff)
+   RETURNING entry_id \gset
+A: INSERT INTO journal_line (entry_id, account_id, debit, credit) VALUES
+   (:entry_id, (SELECT account_id FROM account WHERE code = '1000'), 40000, 0),
+   (:entry_id, (SELECT account_id FROM account WHERE code = '4020'), 0, 4000);
+A: COMMIT;
+A: SELECT count(*) AS mistyped_entries FROM journal_entry WHERE description = 'P3 exercise: mistyped entry';

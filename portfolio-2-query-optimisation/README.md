@@ -65,7 +65,7 @@ The query looks up the newest measurement set for one wearer. Before, all 35,802
 
 ### Q4: revenue for one month
 
-This is the query that indexing did not fix. The block-range index finds September's 8,883 journal entries by reading about 130 pages instead of 2,648. But the amounts are in `journal_line`, and PostgreSQL still reads all 591,146 lines and joins them by hash. It is right to do so: fetching the lines for 8,883 entries one at a time through an index would touch more pages than reading the table once. Pages read fall by about 40% and the time barely moves. The fix is in experiment B.
+This is the query that indexing did not fix. The block-range index finds September's 8,883 journal entries by reading about 130 pages instead of 2,648. But the amounts are in `journal_line`, and PostgreSQL still reads all 591,146 lines and joins them by hash. It is right to do so: fetching the lines for 8,883 entries one at a time through an index would touch more pages than reading the table once. Pages read fall by about 40% and the time improves by about a third, far less than any other query. The fix is in experiment B.
 
 ### Q5: finished orders still owing money
 

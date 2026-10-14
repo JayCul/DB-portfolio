@@ -1,0 +1,91 @@
+==============================================================================
+06_write_skew: Write skew - a problem row locks cannot stop, and SERIALIZABLE
+==============================================================================
+
+-- Two cutters each reserve 15 yards of velvet for a job. A reservation is
+-- a new row in the movement log. Each session adds up the log, sees 20
+-- yards, and inserts its own row. No row is changed by both, so there is
+-- nothing for a row lock to wait on, and no CHECK constraint looks at a sum.
+
+-- PART 1. At READ COMMITTED.
+
+[A] BEGIN;
+        BEGIN
+[A] SELECT sum(quantity) AS yards_available FROM stock_movement WHERE material_id = :velvet;
+         yards_available 
+        -----------------
+                   20.00
+        (1 row)
+[B] BEGIN;
+        BEGIN
+[B] SELECT sum(quantity) AS yards_available FROM stock_movement WHERE material_id = :velvet;
+         yards_available 
+        -----------------
+                   20.00
+        (1 row)
+[A] INSERT INTO stock_movement (material_id, movement_type, quantity, recorded_by)
+    VALUES (:velvet, 'job_use', -15, :staff);
+        INSERT 0 1
+[B] INSERT INTO stock_movement (material_id, movement_type, quantity, recorded_by)
+    VALUES (:velvet, 'job_use', -15, :staff);
+        INSERT 0 1
+[A] COMMIT;
+        COMMIT
+[B] COMMIT;
+        COMMIT
+[A] SELECT sum(quantity) AS yards_available FROM stock_movement WHERE material_id = :velvet;
+         yards_available 
+        -----------------
+                  -10.00
+        (1 row)
+
+-- Thirty yards are reserved from a bolt of 20. Each transaction was
+-- correct on its own. Together they broke the rule.
+
+[A] DELETE FROM stock_movement WHERE material_id = :velvet AND movement_type = 'job_use';
+        DELETE 2
+
+-- PART 2. The same steps at SERIALIZABLE. PostgreSQL tracks what each
+-- transaction read, and refuses any commit whose result could not have
+-- come from running the transactions one after the other.
+
+[A] BEGIN ISOLATION LEVEL SERIALIZABLE;
+        BEGIN
+[A] SELECT sum(quantity) AS yards_available FROM stock_movement WHERE material_id = :velvet;
+         yards_available 
+        -----------------
+                   20.00
+        (1 row)
+[B] BEGIN ISOLATION LEVEL SERIALIZABLE;
+        BEGIN
+[B] SELECT sum(quantity) AS yards_available FROM stock_movement WHERE material_id = :velvet;
+         yards_available 
+        -----------------
+                   20.00
+        (1 row)
+[A] INSERT INTO stock_movement (material_id, movement_type, quantity, recorded_by)
+    VALUES (:velvet, 'job_use', -15, :staff);
+        INSERT 0 1
+[B] INSERT INTO stock_movement (material_id, movement_type, quantity, recorded_by)
+    VALUES (:velvet, 'job_use', -15, :staff);
+        INSERT 0 1
+[A] COMMIT;
+        COMMIT
+[B] COMMIT;
+        ERROR:  could not serialize access due to read/write dependencies among transactions
+        DETAIL:  Reason code: Canceled on identification as a pivot, during commit attempt.
+        HINT:  The transaction might succeed if retried.
+
+-- B's commit is refused and its transaction rolled back. When its program
+-- tries again, it reads the log as it now stands and sees that only 5
+-- yards are left.
+
+[B] BEGIN ISOLATION LEVEL SERIALIZABLE;
+        BEGIN
+[B] SELECT sum(quantity) AS yards_available FROM stock_movement WHERE material_id = :velvet;
+         yards_available 
+        -----------------
+                    5.00
+        (1 row)
+[B] ROLLBACK;
+        ROLLBACK

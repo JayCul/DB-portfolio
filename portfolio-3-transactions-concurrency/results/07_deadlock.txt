@@ -1,0 +1,75 @@
+==============================================================================
+07_deadlock: Deadlock - how it happens and how to design it out
+==============================================================================
+
+-- Two orders each need velvet and lining. Session A takes the velvet
+-- first and then the lining. Session B takes them the other way round.
+
+-- PART 1. Opposite order.
+
+[A] BEGIN;
+        BEGIN
+[A] UPDATE material SET qty_on_hand = qty_on_hand - 2 WHERE material_id = :velvet;
+        UPDATE 1
+[B] BEGIN;
+        BEGIN
+[B] UPDATE material SET qty_on_hand = qty_on_hand - 3 WHERE material_id = :lining;
+        UPDATE 1
+[A] UPDATE material SET qty_on_hand = qty_on_hand - 3 WHERE material_id = :lining;
+        ... no reply: waiting for a lock held by the other session
+
+-- A is waiting for B's lock on the lining. Now B asks for the velvet,
+-- which A holds. Each is waiting for the other and neither can move.
+
+[B] UPDATE material SET qty_on_hand = qty_on_hand - 2 WHERE material_id = :velvet;
+        ERROR:  deadlock detected
+        DETAIL:  Process 75128 waits for ShareLock on transaction 1503; blocked by process 25964.
+        Process 25964 waits for ShareLock on transaction 1504; blocked by process 75128.
+        HINT:  See server log for query details.
+        CONTEXT:  while updating tuple (0,127) in relation "material"
+[A] (its waiting statement now completes)
+        UPDATE 1
+
+-- After one second (deadlock_timeout) PostgreSQL looks for a cycle of
+-- waiting sessions, finds one, and cancels one transaction so the other
+-- can go on.
+
+[B] ROLLBACK;
+        ROLLBACK
+[A] COMMIT;
+        COMMIT
+[A] SELECT name, qty_on_hand FROM material WHERE material_id IN (:velvet, :lining) ORDER BY name;
+                name         | qty_on_hand 
+        ---------------------+-------------
+         Royal blue velvet   |       18.00
+         Silver satin lining |       27.00
+        (2 rows)
+
+-- PART 2. The same two orders, but both sessions take the materials in
+-- the same order, lowest material_id first. B waits, but only briefly,
+-- and both orders go through.
+
+[A] BEGIN;
+        BEGIN
+[A] UPDATE material SET qty_on_hand = qty_on_hand - 2 WHERE material_id = :velvet;
+        UPDATE 1
+[B] BEGIN;
+        BEGIN
+[B] UPDATE material SET qty_on_hand = qty_on_hand - 2 WHERE material_id = :velvet;
+        ... no reply: waiting for a lock held by the other session
+[A] UPDATE material SET qty_on_hand = qty_on_hand - 3 WHERE material_id = :lining;
+        UPDATE 1
+[A] COMMIT;
+        COMMIT
+[B] (its waiting statement now completes)
+        UPDATE 1
+[B] UPDATE material SET qty_on_hand = qty_on_hand - 3 WHERE material_id = :lining;
+        UPDATE 1
+[B] COMMIT;
+        COMMIT
+[A] SELECT name, qty_on_hand FROM material WHERE material_id IN (:velvet, :lining) ORDER BY name;
+                name         | qty_on_hand 
+        ---------------------+-------------
+         Royal blue velvet   |       14.00
+         Silver satin lining |       21.00
+        (2 rows)

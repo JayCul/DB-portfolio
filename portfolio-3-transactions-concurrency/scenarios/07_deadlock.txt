@@ -1,0 +1,39 @@
+title: Deadlock - how it happens and how to design it out
+
+# Two orders each need velvet and lining. Session A takes the velvet
+# first and then the lining. Session B takes them the other way round.
+
+# PART 1. Opposite order.
+
+A: BEGIN;
+A: UPDATE material SET qty_on_hand = qty_on_hand - 2 WHERE material_id = :velvet;
+B: BEGIN;
+B: UPDATE material SET qty_on_hand = qty_on_hand - 3 WHERE material_id = :lining;
+A: UPDATE material SET qty_on_hand = qty_on_hand - 3 WHERE material_id = :lining;
+
+# A is waiting for B's lock on the lining. Now B asks for the velvet,
+# which A holds. Each is waiting for the other and neither can move.
+
+B: UPDATE material SET qty_on_hand = qty_on_hand - 2 WHERE material_id = :velvet;
+
+# After one second (deadlock_timeout) PostgreSQL looks for a cycle of
+# waiting sessions, finds one, and cancels one transaction so the other
+# can go on.
+
+B: ROLLBACK;
+A: COMMIT;
+A: SELECT name, qty_on_hand FROM material WHERE material_id IN (:velvet, :lining) ORDER BY name;
+
+# PART 2. The same two orders, but both sessions take the materials in
+# the same order, lowest material_id first. B waits, but only briefly,
+# and both orders go through.
+
+A: BEGIN;
+A: UPDATE material SET qty_on_hand = qty_on_hand - 2 WHERE material_id = :velvet;
+B: BEGIN;
+B: UPDATE material SET qty_on_hand = qty_on_hand - 2 WHERE material_id = :velvet;
+A: UPDATE material SET qty_on_hand = qty_on_hand - 3 WHERE material_id = :lining;
+A: COMMIT;
+B: UPDATE material SET qty_on_hand = qty_on_hand - 3 WHERE material_id = :lining;
+B: COMMIT;
+A: SELECT name, qty_on_hand FROM material WHERE material_id IN (:velvet, :lining) ORDER BY name;

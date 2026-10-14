@@ -1,0 +1,48 @@
+title: Write skew - a problem row locks cannot stop, and SERIALIZABLE
+
+# Two cutters each reserve 15 yards of velvet for a job. A reservation is
+# a new row in the movement log. Each session adds up the log, sees 20
+# yards, and inserts its own row. No row is changed by both, so there is
+# nothing for a row lock to wait on, and no CHECK constraint looks at a sum.
+
+# PART 1. At READ COMMITTED.
+
+A: BEGIN;
+A: SELECT sum(quantity) AS yards_available FROM stock_movement WHERE material_id = :velvet;
+B: BEGIN;
+B: SELECT sum(quantity) AS yards_available FROM stock_movement WHERE material_id = :velvet;
+A: INSERT INTO stock_movement (material_id, movement_type, quantity, recorded_by)
+   VALUES (:velvet, 'job_use', -15, :staff);
+B: INSERT INTO stock_movement (material_id, movement_type, quantity, recorded_by)
+   VALUES (:velvet, 'job_use', -15, :staff);
+A: COMMIT;
+B: COMMIT;
+A: SELECT sum(quantity) AS yards_available FROM stock_movement WHERE material_id = :velvet;
+
+# Thirty yards are reserved from a bolt of 20. Each transaction was
+# correct on its own. Together they broke the rule.
+
+A: DELETE FROM stock_movement WHERE material_id = :velvet AND movement_type = 'job_use';
+
+# PART 2. The same steps at SERIALIZABLE. PostgreSQL tracks what each
+# transaction read, and refuses any commit whose result could not have
+# come from running the transactions one after the other.
+
+A: BEGIN ISOLATION LEVEL SERIALIZABLE;
+A: SELECT sum(quantity) AS yards_available FROM stock_movement WHERE material_id = :velvet;
+B: BEGIN ISOLATION LEVEL SERIALIZABLE;
+B: SELECT sum(quantity) AS yards_available FROM stock_movement WHERE material_id = :velvet;
+A: INSERT INTO stock_movement (material_id, movement_type, quantity, recorded_by)
+   VALUES (:velvet, 'job_use', -15, :staff);
+B: INSERT INTO stock_movement (material_id, movement_type, quantity, recorded_by)
+   VALUES (:velvet, 'job_use', -15, :staff);
+A: COMMIT;
+B: COMMIT;
+
+# B's commit is refused and its transaction rolled back. When its program
+# tries again, it reads the log as it now stands and sees that only 5
+# yards are left.
+
+B: BEGIN ISOLATION LEVEL SERIALIZABLE;
+B: SELECT sum(quantity) AS yards_available FROM stock_movement WHERE material_id = :velvet;
+B: ROLLBACK;

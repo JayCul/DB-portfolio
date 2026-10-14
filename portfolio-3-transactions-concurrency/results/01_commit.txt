@@ -1,0 +1,76 @@
+==============================================================================
+01_commit: A sale is committed as one unit
+==============================================================================
+
+-- Samuel buys 5 yards of velvet and pays 40,000 in cash. Recording that
+-- takes six statements across five tables. Session A does the work.
+-- Session B is someone else looking at the stock at the same moment.
+
+[A] SELECT qty_on_hand FROM material WHERE material_id = :velvet;
+         qty_on_hand 
+        -------------
+               20.00
+        (1 row)
+[A] BEGIN;
+        BEGIN
+[A] INSERT INTO customer_order (customer_id, taken_by, status, notes)
+    VALUES (:customer, :staff, 'collected', 'Portfolio 3 exercise')
+    RETURNING order_id \gset
+        INSERT 0 1
+[A] INSERT INTO order_item (order_id, item_kind, material_id, quantity, unit_price)
+    VALUES (:order_id, 'material', :velvet, 5, 8000)
+    RETURNING order_item_id \gset
+        INSERT 0 1
+[A] INSERT INTO stock_movement (material_id, movement_type, quantity, order_item_id, recorded_by)
+    VALUES (:velvet, 'sale', -5, :order_item_id, :staff);
+        INSERT 0 1
+[A] UPDATE material SET qty_on_hand = qty_on_hand - 5 WHERE material_id = :velvet;
+        UPDATE 1
+[A] INSERT INTO journal_entry (description, posted_by)
+    VALUES ('P3 exercise: velvet sale', :staff)
+    RETURNING entry_id \gset
+        INSERT 0 1
+[A] INSERT INTO journal_line (entry_id, account_id, debit, credit) VALUES
+    (:entry_id, (SELECT account_id FROM account WHERE code = '1000'), 40000, 0),
+    (:entry_id, (SELECT account_id FROM account WHERE code = '4020'), 0, 40000);
+        INSERT 0 2
+[A] INSERT INTO payment (order_id, amount, method, payment_kind, received_by, journal_entry_id)
+    VALUES (:order_id, 40000, 'cash', 'balance', :staff, :entry_id);
+        INSERT 0 1
+
+-- A sees its own work. B does not: the transaction is still open, and
+-- PostgreSQL never shows one session another's uncommitted changes.
+
+[A] SELECT qty_on_hand FROM material WHERE material_id = :velvet;
+         qty_on_hand 
+        -------------
+               15.00
+        (1 row)
+[B] SELECT qty_on_hand FROM material WHERE material_id = :velvet;
+         qty_on_hand 
+        -------------
+               20.00
+        (1 row)
+[B] SELECT count(*) AS exercise_orders FROM customer_order WHERE notes = 'Portfolio 3 exercise';
+         exercise_orders 
+        -----------------
+                       0
+        (1 row)
+
+[A] COMMIT;
+        COMMIT
+
+-- After the commit every part of the sale is visible to B at once.
+
+[B] SELECT qty_on_hand FROM material WHERE material_id = :velvet;
+         qty_on_hand 
+        -------------
+               15.00
+        (1 row)
+[B] SELECT order_total, amount_paid, balance_due
+    FROM v_order_balance
+    WHERE order_id = (SELECT max(order_id) FROM customer_order WHERE notes = 'Portfolio 3 exercise');
+         order_total | amount_paid | balance_due 
+        -------------+-------------+-------------
+            40000.00 |    40000.00 |        0.00
+        (1 row)

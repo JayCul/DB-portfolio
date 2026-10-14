@@ -1,0 +1,74 @@
+==============================================================================
+04_row_locks: Two fixes - a row lock, and an update the database computes itself
+==============================================================================
+
+-- PART 1. The same two sales of 12 yards from a bolt of 20. This time each
+-- session reads the row with FOR UPDATE, which locks it until the
+-- transaction ends.
+
+[A] BEGIN;
+        BEGIN
+[A] SELECT qty_on_hand FROM material WHERE material_id = :velvet FOR UPDATE;
+         qty_on_hand 
+        -------------
+               20.00
+        (1 row)
+[B] BEGIN;
+        BEGIN
+[B] SELECT qty_on_hand FROM material WHERE material_id = :velvet FOR UPDATE;
+        ... no reply: waiting for a lock held by the other session
+
+-- B has to wait. A finishes its sale.
+
+[A] UPDATE material SET qty_on_hand = 8 WHERE material_id = :velvet;
+        UPDATE 1
+[A] INSERT INTO stock_movement (material_id, movement_type, quantity, recorded_by)
+    VALUES (:velvet, 'sale', -12, :staff);
+        INSERT 0 1
+[A] COMMIT;
+        COMMIT
+[B] (its waiting statement now completes)
+         qty_on_hand 
+        -------------
+                8.00
+        (1 row)
+
+-- B's read returns the committed figure, 8, not the 20 it would have seen
+-- earlier. Its program can now see there is not enough and stop.
+
+[B] ROLLBACK;
+        ROLLBACK
+
+-- PART 2. Eight yards are left. Two sessions each try to sell 6. Neither
+-- reads first: the subtraction is written into the UPDATE itself.
+
+[A] BEGIN;
+        BEGIN
+[A] UPDATE material SET qty_on_hand = qty_on_hand - 6 WHERE material_id = :velvet;
+        UPDATE 1
+[B] BEGIN;
+        BEGIN
+[B] UPDATE material SET qty_on_hand = qty_on_hand - 6 WHERE material_id = :velvet;
+        ... no reply: waiting for a lock held by the other session
+[A] INSERT INTO stock_movement (material_id, movement_type, quantity, recorded_by)
+    VALUES (:velvet, 'sale', -6, :staff);
+        INSERT 0 1
+[A] COMMIT;
+        COMMIT
+[B] (its waiting statement now completes)
+        ERROR:  new row for relation "material" violates check constraint "material_qty_on_hand_check"
+        DETAIL:  Failing row contains (53, Royal blue velvet, fabric, yard, 8000.00, -4.00, 5.00).
+
+-- B's UPDATE waited for A's lock, then ran against the new value, 2. The
+-- CHECK constraint from Portfolio 1 refuses to let stock go below zero.
+
+[B] ROLLBACK;
+        ROLLBACK
+[A] SELECT m.qty_on_hand AS shelf_count,
+    (SELECT sum(quantity) FROM stock_movement WHERE material_id = m.material_id) AS log_total
+    FROM material m
+    WHERE m.material_id = :velvet;
+         shelf_count | log_total 
+        -------------+-----------
+                2.00 |      2.00
+        (1 row)
