@@ -196,17 +196,6 @@ erDiagram
     }
 ```
 
-## Reading the notation
-
-| Symbol | Meaning |
-|---|---|
-| `||` | Exactly one |
-| `o|` | Zero or one |
-| `o{` | Zero or many |
-| `|{` | One or many |
-
-For example, `customer ||--o{ wearer` means each wearer belongs to exactly one customer, while a customer can have zero or many wearers.
-
 
 ## Reading the notation
 
