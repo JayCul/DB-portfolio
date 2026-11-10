@@ -1,4 +1,4 @@
-# ER diagram — Deeva's Designs
+# ER diagram for Deeva's Designs
 
 GitHub renders the diagram below directly. Only key columns are shown; the full column list is in [01_schema.sql](01_schema.sql).
 
@@ -196,14 +196,13 @@ erDiagram
     }
 ```
 
-
 ## Reading the notation
 
-| Symbol | Meaning |
-|---|---|
-| `\|\|` | exactly one |
-| `\|o` | zero or one |
-| `o{` | zero or many |
-| `\|{` | one or many |
+| Symbol | Meaning      |
+| ------ | ------------ |
+| `\|\|` | exactly one  |
+| `\|o`  | zero or one  |
+| `o{`   | zero or many |
+| `\|{`  | one or many  |
 
 For example, `customer ||--o{ wearer` reads: each wearer belongs to exactly one customer, and a customer has zero or many wearers.
