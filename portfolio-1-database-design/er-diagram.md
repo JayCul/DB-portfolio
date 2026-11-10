@@ -2,6 +2,8 @@
 
 GitHub renders the diagram below directly. Only key columns are shown; the full column list is in [01_schema.sql](01_schema.sql).
 
+**Naming note:** the entity `garment_style` is the table `style` in [01_schema.sql](01_schema.sql) and the other scripts. It is renamed in the diagram only because `style` is a keyword in Mermaid, the language GitHub uses to draw it. In PostgreSQL `style` is not reserved, so the table keeps its shorter name.
+
 ```mermaid
 erDiagram
     customer ||--o{ wearer : "orders for"
